@@ -42,9 +42,8 @@ app.use(cookieParser());
 app.use(hpp());
 
 // CORS (tightened)
-const allowedOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 app.use(cors({
-	origin: allowedOrigin,
+	origin: [process.env.CLIENT_ORIGIN, 'http://localhost:5173'],
 	credentials: true,
 	methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
 	allowedHeaders: ['Content-Type','Authorization','X-Requested-With','X-CSRF-Token'],
