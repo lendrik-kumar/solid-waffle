@@ -41,22 +41,47 @@ app.use(cookieParser());
 // Prevent HTTP Parameter Pollution
 app.use(hpp());
 
-// CORS (tightened)
-const allowedOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+// CORS (configured for cross-origin)
+const allowedOrigin = process.env.CLIENT_ORIGIN;
+console.log('[SERVER] Allowed CORS origin:', allowedOrigin);
+
+// Build allowed origins array
+const allowedOrigins = [];
+if (allowedOrigin) {
+	allowedOrigins.push(allowedOrigin);
+}
+if (process.env.NODE_ENV !== 'production') {
+	allowedOrigins.push('http://localhost:5173');
+}
+
 app.use(cors({
-	origin: [process.env.CLIENT_ORIGIN, 'http://localhost:5173'],
-	credentials: true,
+	origin: function (origin, callback) {
+		// Allow requests with no origin (like mobile apps or curl requests)
+		if (!origin) return callback(null, true);
+		
+		// Check if origin is in allowed list
+		if (allowedOrigins.includes(origin)) {
+			callback(null, true);
+		} else {
+			console.warn('[CORS] Blocked origin:', origin);
+			callback(new Error('Not allowed by CORS'));
+		}
+	},
+	credentials: true, // CRITICAL: Must be true for cookies to work
 	methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
 	allowedHeaders: ['Content-Type','Authorization','X-Requested-With','X-CSRF-Token'],
+	exposedHeaders: ['Set-Cookie'], // Expose Set-Cookie header
 }));
 
 // Anti-CSRF: validate Origin for state-changing requests (production only)
-if (process.env.NODE_ENV === 'production') {
+// Note: Relaxed for cross-origin cookie support
+if (process.env.NODE_ENV === 'production' && process.env.COOKIE_SAME_SITE !== 'none') {
 	app.use((req, res, next) => {
 		const method = req.method.toUpperCase();
 		if (['POST','PUT','PATCH','DELETE'].includes(method)) {
 			const origin = req.headers.origin;
-			if (origin && origin !== allowedOrigin) {
+			if (origin && !allowedOrigins.includes(origin)) {
+				console.warn('[CSRF] Blocked request from origin:', origin);
 				return res.status(403).json({ error: 'Forbidden: invalid origin' });
 			}
 		}
@@ -66,7 +91,7 @@ if (process.env.NODE_ENV === 'production') {
 
 // Rate limiting (per IP)
 const limiter = rateLimit({
-	windowMs: 15 * 60 * 1000, // 15 minutes
+	windowMs: 5 * 60 * 1000, // 5 minutes
 	max: Number(process.env.RATE_LIMIT_MAX || 200), // max requests per window per IP
 	standardHeaders: true,
 	legacyHeaders: false,

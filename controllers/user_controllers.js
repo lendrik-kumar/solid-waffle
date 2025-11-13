@@ -112,15 +112,69 @@ export const authenticateUser = async (req, res, next) => {
     );
 
     // Set cookie with session token (secure settings)
+    // Automatically detect cross-origin by comparing request origin with backend host
+    const isProduction = process.env.NODE_ENV === "production";
+    const requestOrigin = req.headers.origin;
+    
+    // Get backend URL (handle proxy scenarios)
+    const backendHost = req.get('host') || req.hostname;
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const backendProtocol = forwardedProto || req.protocol || (req.secure ? 'https' : 'http');
+    const backendUrl = `${backendProtocol}://${backendHost}`;
+    
+    // Check if request is cross-origin (different domain)
+    // Also check if explicitly set via env var
+    const isExplicitCrossOrigin = process.env.COOKIE_SAME_SITE === "none";
+    let isAutoDetectedCrossOrigin = false;
+    
+    if (requestOrigin) {
+      try {
+        const originHostname = new URL(requestOrigin).hostname;
+        const backendHostname = new URL(backendUrl).hostname;
+        isAutoDetectedCrossOrigin = originHostname !== backendHostname;
+      } catch (e) {
+        // If URL parsing fails, check simple string comparison
+        isAutoDetectedCrossOrigin = requestOrigin !== backendUrl && 
+                                    !requestOrigin.includes(backendHost);
+      }
+    }
+    
+    const isCrossOrigin = isExplicitCrossOrigin || isAutoDetectedCrossOrigin;
+    
+    // Determine if request is over HTTPS
+    const isHttps = req.secure || 
+                    req.protocol === 'https' || 
+                    forwardedProto === 'https' ||
+                    (requestOrigin && requestOrigin.startsWith('https://'));
+    
+    // For cross-origin: MUST use sameSite: "none" with secure: true (HTTPS required)
+    // For same-origin: use sameSite: "strict" (production) or "lax" (development)
     const cookieOptions = {
       httpOnly: true, // Prevents XSS attacks
-      secure: process.env.NODE_ENV === "production", // HTTPS only in production
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax", // CSRF protection
+      secure: isCrossOrigin ? true : (isProduction || isHttps), // Must be true for cross-origin
+      sameSite: isCrossOrigin ? "none" : (isProduction ? "strict" : "lax"), // CSRF protection
       maxAge: expiresIn * 1000, // Convert to milliseconds
       path: "/", // Cookie available for all paths
+      // For cross-origin: DO NOT set domain (let browser handle it)
+      // For same-origin subdomains: set domain if provided
+      ...(process.env.COOKIE_DOMAIN && !isCrossOrigin && { domain: process.env.COOKIE_DOMAIN }),
     };
 
     res.cookie("session", token, cookieOptions);
+    
+    // Log cookie settings for debugging (without sensitive data)
+    console.log("[AUTH] Cookie set with options:", {
+      httpOnly: cookieOptions.httpOnly,
+      secure: cookieOptions.secure,
+      sameSite: cookieOptions.sameSite,
+      maxAge: cookieOptions.maxAge,
+      path: cookieOptions.path,
+      domain: cookieOptions.domain || "default",
+      detectedCrossOrigin: isCrossOrigin,
+      requestOrigin: requestOrigin || "none",
+      backendUrl: backendUrl,
+      isHttps: isHttps,
+    });
 
     return res.status(200).json({
       message: "Login successful",
@@ -360,11 +414,43 @@ export const getSubmission = async (req, res, next) => {
 export const logoutUser = async (req, res, next) => {
   try {
     // Clear the session cookie (must match the same options used when setting)
+    const isProduction = process.env.NODE_ENV === "production";
+    const requestOrigin = req.headers.origin;
+    
+    // Get backend URL (handle proxy scenarios)
+    const backendHost = req.get('host') || req.hostname;
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const backendProtocol = forwardedProto || req.protocol || (req.secure ? 'https' : 'http');
+    const backendUrl = `${backendProtocol}://${backendHost}`;
+    
+    const isExplicitCrossOrigin = process.env.COOKIE_SAME_SITE === "none";
+    let isAutoDetectedCrossOrigin = false;
+    
+    if (requestOrigin) {
+      try {
+        const originHostname = new URL(requestOrigin).hostname;
+        const backendHostname = new URL(backendUrl).hostname;
+        isAutoDetectedCrossOrigin = originHostname !== backendHostname;
+      } catch (e) {
+        // If URL parsing fails, check simple string comparison
+        isAutoDetectedCrossOrigin = requestOrigin !== backendUrl && 
+                                    !requestOrigin.includes(backendHost);
+      }
+    }
+    
+    const isCrossOrigin = isExplicitCrossOrigin || isAutoDetectedCrossOrigin;
+    
+    const isHttps = req.secure || 
+                    req.protocol === 'https' || 
+                    forwardedProto === 'https' ||
+                    (requestOrigin && requestOrigin.startsWith('https://'));
+    
     res.clearCookie("session", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      secure: isCrossOrigin ? true : (isProduction || isHttps),
+      sameSite: isCrossOrigin ? "none" : (isProduction ? "strict" : "lax"),
       path: "/",
+      ...(process.env.COOKIE_DOMAIN && !isCrossOrigin && { domain: process.env.COOKIE_DOMAIN }),
     });
 
     console.log("[LOGOUT] User logged out successfully");

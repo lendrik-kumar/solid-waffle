@@ -6,6 +6,17 @@ import jwt from "jsonwebtoken";
  */
 export const verifyAuth = async (req, res, next) => {
   try {
+    // Debug: Log cookie information (without sensitive data)
+    console.log('[AUTH MIDDLEWARE] Cookies received:', {
+      hasSessionCookie: !!req.cookies?.session,
+      cookieNames: Object.keys(req.cookies || {}),
+      headers: {
+        cookie: req.headers.cookie ? 'present' : 'missing',
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+      },
+    });
+
     // Get token from cookie
     const token = req.cookies?.session;
 
